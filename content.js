@@ -35,16 +35,20 @@
       body.clientHeight, html.clientHeight
     );
 
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const dpr = window.devicePixelRatio || 1;
-
-    return { fullWidth, fullHeight, viewportWidth, viewportHeight, dpr };
+    return {
+      fullWidth,
+      fullHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      dpr: window.devicePixelRatio || 1
+    };
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     (async () => {
-      if (msg?.type === "FPSHOT_GET_METRICS") {
+      if (msg?.type === "FPSHOT_PING") {
+        sendResponse({ ok: true });
+      } else if (msg?.type === "FPSHOT_GET_METRICS") {
         injectTempCSS();
         sendResponse({ ok: true, metrics: getMetrics(), url: location.href });
       } else if (msg?.type === "FPSHOT_SCROLL_TO") {
@@ -59,6 +63,7 @@
         sendResponse({ ok: false, error: "Unknown message type" });
       }
     })();
-    return true; 
+    return true;
   });
 })();
+

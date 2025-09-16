@@ -10,6 +10,16 @@ const errorEl = document.getElementById("error");
 
 let lastCompositeBlobUrl = null;
 
+(function guardNotWebpage() {
+  // Kalau popup.html dibuka sebagai halaman biasa, chrome.runtime bisa tidak ada
+  if (!window.chrome || !chrome.runtime || !chrome.runtime.id) {
+    showError(
+      "Ini halaman popup ekstensi. Jangan dibuka langsung di tab.\n" +
+      "Gunakan ikon ekstensi di toolbar (klik ikon → popup ini muncul)."
+    );
+  }
+})();
+
 function showError(msg) {
   errorEl.textContent = msg;
   errorEl.classList.remove("hidden");
@@ -21,6 +31,7 @@ function resetUI() {
   progressWrap.classList.add("hidden");
   progressBar.style.width = "0%";
   previewWrap.classList.add("hidden");
+  btnStart.disabled = false;
   if (lastCompositeBlobUrl) {
     URL.revokeObjectURL(lastCompositeBlobUrl);
     lastCompositeBlobUrl = null;
@@ -31,11 +42,14 @@ btnStart.addEventListener("click", async () => {
   resetUI();
   statusEl.textContent = "Menyiapkan...";
   progressWrap.classList.remove("hidden");
+  btnStart.disabled = true;
 
   try {
-    await chrome.runtime.sendMessage({ type: "FPSHOT_START" });
+    const res = await chrome.runtime.sendMessage({ type: "FPSHOT_START" });
+    if (!res?.ok) throw new Error(res?.error || "Gagal memulai capture");
     statusEl.textContent = "Mulai capture...";
   } catch (e) {
+    btnStart.disabled = false;
     showError(e?.message || "Gagal memulai capture");
   }
 });
@@ -48,61 +62,45 @@ chrome.runtime.onMessage.addListener((msg) => {
   } else if (msg?.type === "FPSHOT_DONE") {
     statusEl.textContent = "Menjahit gambar...";
     stitchAndShow(msg.payload).catch((e) => {
+      btnStart.disabled = false;
       showError(e?.message || "Gagal menjahit gambar");
     });
   }
 });
 
 async function stitchAndShow(payload) {
-  const {
-    dpr, fullWidth, fullHeight, viewportHeight, overlap, parts, url
-  } = payload;
+  const { dpr, fullWidth, fullHeight, viewportHeight, parts, url } = payload;
 
   const canvas = resultCanvas;
   const ctx = canvas.getContext("2d");
-
   canvas.width = Math.floor(fullWidth);
   canvas.height = Math.floor(fullHeight);
 
-  let yDraw = 0;
   for (let i = 0; i < parts.length; i++) {
     const { y, dataUrl } = parts[i];
-
     const img = await loadImage(dataUrl);
 
     const remaining = fullHeight - y;
     const sliceCssHeight = Math.min(viewportHeight, remaining);
-
     const imgCssHeight = img.height / dpr;
-
     const scaleY = sliceCssHeight / imgCssHeight;
-    const sliceCssWidth = canvas.width; // fullWidth
 
     ctx.save();
     ctx.scale(1, scaleY);
-    ctx.drawImage(img, 0, y / scaleY, sliceCssWidth, imgCssHeight);
+    ctx.drawImage(img, 0, y / scaleY, canvas.width, imgCssHeight);
     ctx.restore();
-
-    yDraw = y + sliceCssHeight;
   }
 
   previewWrap.classList.remove("hidden");
   statusEl.textContent = "Selesai. Anda bisa download.";
+  btnStart.disabled = false;
 
   btnDownload.onclick = async () => {
-    try {
-      const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
-      const blobUrl = URL.createObjectURL(blob);
-      lastCompositeBlobUrl = blobUrl;
-      const fileName = makeSafeFileName(url) + ".png";
-      await chrome.downloads.download({
-        url: blobUrl,
-        filename: fileName,
-        saveAs: true
-      });
-    } catch (e) {
-      showError(e?.message || "Gagal download");
-    }
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+    const blobUrl = URL.createObjectURL(blob);
+    lastCompositeBlobUrl = blobUrl;
+    const fileName = makeSafeFileName(url) + ".png";
+    await chrome.downloads.download({ url: blobUrl, filename: fileName, saveAs: true });
   };
 }
 
@@ -126,3 +124,4 @@ function makeSafeFileName(urlStr) {
     return "screenshot";
   }
 }
+
